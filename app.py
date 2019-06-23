@@ -9,9 +9,17 @@ import time
 
 from pip._vendor.html5lib._utils import memoize
 
+from gpiozero import Button, LED
+water_level_switch = Button(25)
+# green_led = LED(5)
+# yellow_led = LED(6)
+# red_led = LED(13)
+
+
 app = Flask(__name__)
 
 MAX_VAULT = 4096
+
 
 class LightRange(Enum):
     VERY_LOW = "Increase light now!"
@@ -28,9 +36,14 @@ class TempRange(Enum):
 
 
 class PHRange(Enum):
-    ACID = "Water are to Acid! Replace Water "
+    ACID = "Water are too Acid! Please adjust it with new water and fertilizer"
     NORMAL = None
-    BASE = "Water are to base! Replace water"
+    BASE = "Water are too base! Please adjust it with new water and fertilizer"
+
+
+class WaterLevelRange(Enum):
+    LOW = "Water level is low!"
+    NORMAL = None
 
 
 class AlertStatus(Enum):
@@ -43,6 +56,7 @@ FUNC_TO_RANGE = {
     "_temp": (TempRange, 10*60),
     "_light": (LightRange, 8*60*60),
     "_ph": (PHRange, 60*60),
+    "_water_level": (WaterLevelRange, 60*60)
 }
 
 
@@ -56,6 +70,7 @@ def test():
     alive = 0
     global metrics
     metrics = {func.__name__: {} for func in [_temp, _light, _ph]}
+
     while True:
         for func in [_temp, _light, _ph]:
 
@@ -71,6 +86,8 @@ def test():
         if alive > 60*60*24:  # day
             alive = 0
             metrics = {func.__name__: {} for func in [_temp, _light, _ph]}
+
+        # TODO : Switch on & off the led lights (for example green_led.on() & green_led.off())
 
 
 @app.route('/temperature')
@@ -108,6 +125,7 @@ def _temp():
 @app.route('/')
 def hello():
     return "Alla Yesh Botnim"
+
 
 def analog(ads_port):
     import board
@@ -178,6 +196,29 @@ def _light():
         "status": range.name,
         "alert": alert.name,
         "action": range.value,
+    }
+
+
+@app.route('/water_level')
+def water_level():
+    return jsonify(_water_level())
+
+
+def _water_level():
+    is_active = water_level_switch.is_active
+
+    if is_active:
+        alert = AlertStatus.GREEN
+        water_level_range = WaterLevelRange.NORMAL
+    else:
+        alert = AlertStatus.RED
+        water_level_range = WaterLevelRange.LOW
+
+    return {
+        "value": is_active,
+        "status": water_level_range.name,
+        "alert": alert.name,
+        "action": water_level_range.value,
     }
 
 
