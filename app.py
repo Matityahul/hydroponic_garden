@@ -6,6 +6,8 @@ from flask import Flask, jsonify
 
 import adafruit_ads1x15.ads1115 as ADS
 import time
+import dweepy
+import requests
 
 from pip._vendor.html5lib._utils import memoize
 
@@ -69,25 +71,66 @@ global metrics
 def test():
     alive = 0
     global metrics
-    metrics = {func.__name__: {} for func in [_temp, _light, _ph]}
+    metrics = {func.__name__: {} for func in [_temp, _light, _ph, _water_level]}
+
+    cur_vars = {
+        "ph": 0,
+        "level": WaterLevelRange.NORMAL.name,
+        "temp": 0,
+        "light": 0,
+    }
 
     while True:
-        for func in [_temp, _light, _ph]:
+        alerted_count = 0
+        for func in [_temp, _light, _ph, _water_level]:
 
             res = func()
             if res["alert"] == AlertStatus.RED.name:
-                metrics[func.__name__][res["status"]] = metrics[func.__name__].get(res["status"], 0) + 1
+                count = metrics[func.__name__].get(res["status"], 0) + 1
+                metrics[func.__name__][res["status"]] = count
 
                 print(metrics[func.__name__][res["status"]])
+                if count > FUNC_TO_RANGE[func.__name__][1]:
+                    alerted_count += 1
+
+            cur_vars[func.__name__[1:]] = res["value"]
+
+        if alerted_count > 1:
+            red_led.on()
+            yellow_led.off()
+            green_led.off()
+            print("red!")
+        elif alerted_count == 1:
+            red_led.off()
+            yellow_led.on()
+            green_led.off()
+            print("yellow!")
+        else:
+            red_led.off()
+            yellow_led.off()
+            green_led.on()
+
         time.sleep(1)
+
+        if alive % (15*60) == 0:
+            requests.post(
+                "https://dweetpro.io:443/v2/dweets",
+                headers={
+                    "X-DWEET-AUTH": "eyJ1c2VybmFtZSI6ImJhcmFreUBuZXRhcHAuY29tIiwiZmlyc3ROYW1lIjoiTmV0YXBwIiwibGFzdE5hbWUiOiJUZWFtIiwicm9sZSI6ImFkbWluIiwibGFzdExvZ2luIjpudWxsLCJhY2NvdW50IjpbeyJuYW1lIjoiTkVUQVBQIiwicm9sZSI6ImFkbWluIn1dLCJjb21wYW55IjoiTkVUQVBQIiwidmFsaWRpdHkiOjE1NjEzMDMzNDMxMTB9.83589c3aba00ade76f9517150c8e3000e06f67bf0a7c5a7e880b715b16795169"
+                },
+                json={
+                    "thing": "Netapp-indoor-gardening",
+                    "key": "5hj34-EjtZf-9h32V-3is9E-6Nn-W",
+                    "content": cur_vars
+                }
+            )
+            print("sent metric with ", cur_vars)
 
         alive += 1
 
         if alive > 60*60*24:  # day
             alive = 0
             metrics = {func.__name__: {} for func in [_temp, _light, _ph]}
-
-        # TODO : Switch on & off the led lights (for example green_led.on() & green_led.off())
 
 
 @app.route('/temperature')
@@ -97,7 +140,7 @@ def temp():
 
 def _temp():
     sensor = W1ThermSensor()
-    temperature = sensor.get_temperature()
+    temperature = round(sensor.get_temperature(), 1)
     if temperature > 30:
         range = TempRange.HOT
         if temperature > 35:
@@ -144,7 +187,7 @@ def ph():
 
 def _ph():
     voltage = analog(ADS.P3).voltage
-    y = 60 * voltage - 62.5
+    y = round(20 * voltage - 49, 1)
     if y < 4.5:
         range = PHRange.ACID
         if y < 3:
@@ -174,7 +217,7 @@ def light():
 
 
 def _light():
-    voltage = analog(ADS.P0).voltage * 1000
+    voltage = round(analog(ADS.P0).voltage * 1000)
     if voltage < 100:
         range = LightRange.VERY_LOW
         alert = AlertStatus.RED
@@ -215,7 +258,7 @@ def _water_level():
         water_level_range = WaterLevelRange.LOW
 
     return {
-        "value": is_active,
+        "value": water_level_range.name,
         "status": water_level_range.name,
         "alert": alert.name,
         "action": water_level_range.value,
@@ -239,8 +282,8 @@ def cur_alerts():
 
 
 if __name__ == '__main__':
-    deref_thread = threading.Thread(target=test)
-    deref_thread.daemon = True
-    deref_thread.start()
+    test_thread = threading.Thread(target=test)
+    test_thread.daemon = True
+    test_thread.start()
 
-    app.run(debug=True, host="0.0.0.0", port=8000)
+    app.run(debug=False, host="0.0.0.0", port=8000)
