@@ -11,9 +11,9 @@ from pip._vendor.html5lib._utils import memoize
 
 from gpiozero import Button, LED
 water_level_switch = Button(25)
-# green_led = LED(5)
-# yellow_led = LED(6)
-# red_led = LED(13)
+green_led = LED(5)
+yellow_led = LED(6)
+red_led = LED(13)
 
 
 app = Flask(__name__)
